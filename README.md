@@ -1,90 +1,99 @@
-# Lumora — Vendor Borrower Trust Model
+# Lumora — Credit Access for Informal Entrepreneurs
 
-A trust scoring system for informal women entrepreneurs in Brazil (MEI holders, autônomas, micro-business owners). Scores the probability that a borrower will repay a loan using alternative financial data (PIX / Open Finance) and qualitative signals, with a plain-language explanation for investors.
-
-Full technical specification: [`Lumora_Spec_MD.md`](./Lumora_Spec_MD.md)
+A credit-access platform for informal Brazilian micro-entrepreneurs (mostly women). Lumora uses WhatsApp to reach leads, collects documents and business information through a guided chat, builds a structured business portfolio from the raw uploads, and feeds that data into a probability scoring pipeline to assess creditworthiness.
 
 ---
 
-## What's been built
+## Three deliverables
 
-### Scoring engine (`scoring_engine/`)
-Rules-based scorecard (Phase 0, §10 of spec). No training data required.
+### 1. WhatsApp chatbot (`whatsapp/`)
 
-| File | What it does |
-|------|-------------|
-| `models.py` | Pydantic input/output types — `BorrowerFeatures`, `TrustScore` and supporting models |
-| `scorecard.py` | `score_borrower(features) → TrustScore` — 7-factor weighted scorecard, 300–850 display scale |
-| `extractor.py` | `extract_features(transactions, accounts, profile) → BorrowerFeatures` — turns raw Belvo-style transaction JSON into the flat feature row the scorer expects |
-| `synthetic.py` | Faker (pt_BR) generators for borrower records and labeled outcomes — used for testing and demos |
+An intake tool that contacts leads from the lead CSV files and guides them through a structured conversation.
 
-### REST API (`api/`)
-FastAPI wrapper around the scoring engine.
+- Sends dynamic multiple-choice messages using the WhatsApp Business API
+- Accepts text, images, documents, and voice messages from users
+- Includes an escalation path to a human representative
+- Stores all incoming data as raw + lightly structured responses for the portfolio builder
 
-| Endpoint | What it does |
-|----------|-------------|
-| `GET /health` | Liveness check — returns `{"status": "ok", "model_version": "..."}` |
-| `POST /score` | Accepts `BorrowerFeatures` JSON, returns `TrustScore` JSON (§5.1 of spec). Pydantic validation → 422 on bad input. |
+**Status:** In design — awaiting conversation flow from Sandra and WhatsApp API credentials.
 
-Auto-generated Swagger UI at `/docs` when running locally.
+### 2. Business portfolio builder (`portfolio/`)
+
+An AI pipeline that turns raw WhatsApp uploads into a structured business profile per applicant.
+
+- Input: text messages, photos (receipts, storefronts, ID), documents (bank statements, MEI certificate)
+- OCR for text in images
+- Claude processes all collected material and populates a business portfolio JSON schema
+- Output: one structured JSON object per applicant
+
+**Status:** In design — awaiting portfolio field template from Sandra.
+
+### 3. Scoring integration (`api/`)
+
+Parses the business portfolio into scoring features and calls external credit APIs.
+
+- Serasa Experian API — credit bureau data
+- Belvo API — Open Finance / PIX transaction history
+- Outputs a probability score + recommended loan amount
+
+**Status:** Serasa API reference doc in repo; access requires registration.
+
+---
+
+## Lead data
+
+Two CSV files from Meta ad campaigns are the source of real leads (~200 total, ~20 targeted for pilot):
+
+| File | Segment |
+|------|---------|
+| `Negativados_Leads_2026-06-17_2026-06-20.csv` | Leads with negative credit history |
+| `Taxa_Leads_2026-06-17_2026-06-20.csv` | Leads concerned about high interest rates |
+
+Key fields per lead: `full_name`, `whatsapp_number`, `email`, `date_of_birth`, business type (free text), and survey answers about credit needs and usage.
 
 ---
 
 ## Pipeline
 
 ```
-RawTransaction[] + RawAccount[]     ← Belvo / Pluggy API (or sandbox)
-  + ProfileMeta                     ← onboarding form
-      │
-      ▼
-  extract_features()                ← scoring_engine/extractor.py
-      │
-      ▼
-  BorrowerFeatures (flat row)
-      │
-      ▼
-  score_borrower()                  ← scoring_engine/scorecard.py
-      │
-      ▼
-  TrustScore (JSON)                 ← §5.1 of spec
-    payback_probability: 0.81
-    trust_score: 718
-    risk_band: "B"
-    confidence: 0.75
-    recommended_loan_brl: 1500
-    explanation: { top_positive_factors, top_negative_factors }
+Lead CSV (whatsapp_number)
+    │
+    ▼
+WhatsApp chatbot  ←→  User sends text, photos, docs
+    │
+    ▼
+Raw message store (per-user)
+    │
+    ▼
+Business portfolio builder (Claude AI)
+    │
+    ▼
+BusinessPortfolio JSON
+    │
+    ▼
+Scoring integration  →  Serasa API / Belvo API
+    │
+    ▼
+Probability score + recommended loan amount
 ```
 
 ---
 
-## Scorecard factors (Phase 0)
+## Repository layout
 
-| # | Factor | Weight | Source |
-|---|--------|--------|--------|
-| 1 | Debt-service capacity (income ÷ repayment) | 25% | Open Finance / PIX |
-| 2 | Income stability (inflow CV) | 20% | Open Finance / PIX |
-| 3 | Business / account tenure | 15% | Open Finance / PIX |
-| 4 | Customer base breadth (distinct payers) | 10% | Open Finance / PIX |
-| 5 | Cash management (negative-balance days) | 10% | Open Finance / PIX |
-| 6 | Verification (ID, address, MEI, bank) | 10% | Documents |
-| 7 | Profile completeness (photos, online presence) | 10% | Profile form |
-
-Demographics (gender, location) are collected for bias monitoring only and never enter the scorer (LGPD compliance, §4-C of spec).
+```
+whatsapp/         — (to be created) webhook, message router, conversation state
+portfolio/        — (to be created) AI pipeline: raw uploads → BusinessPortfolio JSON
+api/              — FastAPI app (health check; will host webhook and portfolio endpoints)
+scoring_engine/   — old Phase 0 rules-based scorecard (reference only, superseded)
+tests/            — pytest suite against old scorecard
+```
 
 ---
 
-## Tests
+## Compliance
 
-153 tests, 0 failures.
-
-| File | Type | Count |
-|------|------|-------|
-| `tests/test_smoke.py` | Smoke | 6 |
-| `tests/test_scorecard.py` | Unit | 33 |
-| `tests/test_synthetic.py` | Unit | 15 |
-| `tests/test_regression.py` | Regression | 34 |
-| `tests/test_api.py` | Smoke / Unit / Validation / Regression | 19 |
-| `tests/test_extractor.py` | Unit / Edge / Regression / Integration | 46 |
+Demographics (gender, location) are collected for bias monitoring only. They are never passed as features to any scoring function (LGPD, Brazil).
 
 ---
 
@@ -93,25 +102,23 @@ Demographics (gender, location) are collected for bias monitoring only and never
 ```bash
 # 1. Create and activate venv
 python -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
-# 2. Install (scoring engine + API + dev tools)
+# 2. Install
 pip install -e ".[api,dev]"
 
-# 3. Run tests
-pytest tests/ -v
-
-# 4. Start the API
+# 3. Run existing API
 uvicorn api.main:app --reload
 # Swagger UI → http://localhost:8000/docs
 ```
 
 ---
 
-## What's next (planned subproblems)
+## What's needed before building
 
-- [ ] Synthetic transaction generator — Faker-based Belvo-shaped JSON for demo flows
-- [ ] Feature store — persist extracted feature rows to Postgres
-- [ ] `POST /score/full` — accepts raw Belvo JSON + profile form, runs extractor then scorer in one call
-- [ ] XGBoost pipeline — proven on Kaggle Home Credit dataset (scaffold for Phase 2 ML)
-- [ ] Investor and entrepreneur portals (React PWA)
+| Item | Who | Unblocks |
+|------|-----|---------|
+| WhatsApp conversation flow / script | Sandra | Chatbot D1 |
+| Business portfolio field template | Sandra | Portfolio builder D2 |
+| WhatsApp Business API credentials | Muhannad | Chatbot D1 |
+| Serasa API access | Muhannad | Scoring D3 |
