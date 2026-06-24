@@ -19,6 +19,9 @@ An intake tool that contacts leads from the lead CSV files and guides them throu
 flow engine are working and tested. Running on a **placeholder** flow (`whatsapp/flows/intake_pt_BR.json`)
 until Sandra's approved script lands; needs Meta credentials in `.env` to go live.
 
+**Setup:** see [`docs/SETUP_WHATSAPP.md`](./docs/SETUP_WHATSAPP.md) — step-by-step from creating the
+Meta app to messaging the pilot leads.
+
 ### 2. Business portfolio builder (`portfolio/`)
 
 An AI pipeline that turns raw WhatsApp uploads into a structured business profile per applicant.
